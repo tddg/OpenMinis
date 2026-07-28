@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 private let logger = AppLogger(category: "AIChatVM")
 
@@ -130,42 +131,109 @@ extension AIChatViewModel {
 
         let cmdIdx = await ShellCommandRingBuffer.shared.didStart(command: command, sessionId: sid)
 
-        let result = try await ISHExecutionCoordinator.shared.execute(
-            sessionId: sid,
-            command: command,
-            timeout: effectiveTimeout,
-            // ISHShellExecutor dispatches every line on the main queue
-            // already (ISHShellExecutor.m:780/812), so we're guaranteed to
-            // run on the main thread here. Calling the MainActor-isolated
-            // closure synchronously via `assumeIsolated` avoids spawning a
-            // fresh `Task { @MainActor in ... }` per line — that wrapper
-            // used to pile up behind high-volume output (one MainActor job
-            // per line) and starve other MainActor work such as
-            // BrowserUseOffloadBridge's semaphore signal, causing
-            // execute_js/navigate to hang inside a Python subprocess.
-            lineCallback: { line in
-                MainActor.assumeIsolated { lineCallback(line) }
-            },
-            pidCallback: { [weak self] pid in
-                // Unlike lineCallback, pidCallback is invoked from the
-                // coordinator actor context (not the main queue), so we
-                // can't MainActor.assumeIsolated here. It only fires 1-2
-                // times per command so a Task hop is fine.
-                Task { @MainActor in
-                    self?.runningCommandPid = pid
-                    self?.commandStartTime = pid > 0 ? Date() : nil
-                }
+        // Energy research trace: one shell_execute span per coordinator call,
+        // nested under the session's agent_task. The span ends before output
+        // sanitation (recorded separately below). Hash-only by default — the
+        // raw command never enters the trace.
+        let energyCtx = EnergyTraceRuntime.shared.taskContext(sessionId: sid)
+        var shellToken: EnergySpanToken?
+        if let energyCtx {
+            var meta: [String: EnergyValue] = [
+                "command_hash": .string(EnergyTraceHasher.installHasher().hashCommand(command)),
+                "command_length": .int(Int64(command.count)),
+                "timeout_s": .double(effectiveTimeout),
+                "tool_family": .string("shell"),
+                "execution_surface": .string("ish"),
+            ]
+            if EnergyTraceState.configuration.storeCommandPreview {
+                meta["command_preview"] = .string(String(command.prefix(120)))
             }
-        )
+            shellToken = await EnergyTrace.shared.beginSpan(
+                runID: energyCtx.runID, parent: energyCtx.parent,
+                name: .shellExecute, metadata: meta)
+        }
+        // First real (non-zero) guest PID, for correlation with kernel logs.
+        let observedPid = OSAllocatedUnfairLock(initialState: Int32(0))
+
+        let result: ISHCommandResult
+        do {
+            result = try await ISHExecutionCoordinator.shared.execute(
+                sessionId: sid,
+                command: command,
+                timeout: effectiveTimeout,
+                // ISHShellExecutor dispatches every line on the main queue
+                // already (ISHShellExecutor.m:780/812), so we're guaranteed to
+                // run on the main thread here. Calling the MainActor-isolated
+                // closure synchronously via `assumeIsolated` avoids spawning a
+                // fresh `Task { @MainActor in ... }` per line — that wrapper
+                // used to pile up behind high-volume output (one MainActor job
+                // per line) and starve other MainActor work such as
+                // BrowserUseOffloadBridge's semaphore signal, causing
+                // execute_js/navigate to hang inside a Python subprocess.
+                lineCallback: { line in
+                    MainActor.assumeIsolated { lineCallback(line) }
+                },
+                pidCallback: { [weak self] pid in
+                    if pid > 0 {
+                        observedPid.withLock { $0 = pid }
+                    }
+                    // Unlike lineCallback, pidCallback is invoked from the
+                    // coordinator actor context (not the main queue), so we
+                    // can't MainActor.assumeIsolated here. It only fires 1-2
+                    // times per command so a Task hop is fine.
+                    Task { @MainActor in
+                        self?.runningCommandPid = pid
+                        self?.commandStartTime = pid > 0 ? Date() : nil
+                    }
+                }
+            )
+        } catch {
+            if let shellToken {
+                let outcome: EnergySpanOutcome = (error is CancellationError)
+                    ? .cancelled
+                    : .failure(String(describing: type(of: error)))
+                await EnergyTrace.shared.endSpan(shellToken, outcome: outcome)
+            }
+            await ShellCommandRingBuffer.shared.didExit(index: cmdIdx, exitCode: -1)
+            throw error
+        }
 
         await ShellCommandRingBuffer.shared.didExit(index: cmdIdx, exitCode: result.exitCode)
+
+        if let shellToken {
+            // The coordinator reports timeout as exitCode -1 plus a marker
+            // string rather than a thrown error; classify it from that proxy.
+            let timedOut = result.exitCode == -1 && result.output.contains("timed out after")
+            var meta: [String: EnergyValue] = [
+                "exit_code": .int(Int64(result.exitCode)),
+                "stdout_bytes": .int(Int64(result.output.utf8.count)),
+                "line_count": .int(Int64(result.output.reduce(into: 0) { if $1 == "\n" { $0 += 1 } })),
+            ]
+            let pid = observedPid.withLock { $0 }
+            if pid > 0 { meta["pid"] = .int(Int64(pid)) }
+            let outcome = timedOut ? EnergySpanOutcome.timedOut
+                : EnergySpanOutcome(success: result.exitCode == 0)
+            await EnergyTrace.shared.endSpan(shellToken, outcome: outcome, metadata: meta)
+        }
 
         // Fold carriage-return sequences: simulate terminal line-overwrite behaviour.
         // Tools like yt-dlp emit "\r[download] X%" to overwrite the current line; without a TTY
         // every update is captured verbatim, ballooning the output with hundreds of redundant lines.
         // We replay each \r as a real terminal would: later text on the same line overwrites earlier text,
         // so only the final state of each line is kept — matching what you would actually see on screen.
+        var sanitizeToken: EnergySpanToken?
+        if let energyCtx {
+            sanitizeToken = await EnergyTrace.shared.beginSpan(
+                runID: energyCtx.runID, parent: shellToken ?? energyCtx.parent,
+                name: .shellOutputSanitize,
+                metadata: ["input_bytes": .int(Int64(result.output.utf8.count))])
+        }
         var output = Self.sanitizeTerminalOutput(result.output)
+        if let sanitizeToken {
+            await EnergyTrace.shared.endSpan(
+                sanitizeToken, outcome: .success,
+                metadata: ["output_bytes": .int(Int64(output.utf8.count))])
+        }
 
         // Apply truncation — keep head + tail so the model sees both the beginning and end
         if output.count > Self.kMaxToolResultChars {
