@@ -32,7 +32,10 @@ final class EnergyTraceStore: @unchecked Sendable {
         if let directory {
             self.directory = directory
         } else {
-            let base = FileManager.default.urls(for: .applicationSupportDirectory,
+            // Documents (not Application Support) so traces surface in the
+            // Files app via UIFileSharingEnabled — researchers pull them by
+            // AirDrop without any export step or container download.
+            let base = FileManager.default.urls(for: .documentDirectory,
                                                 in: .userDomainMask).first
                 ?? FileManager.default.temporaryDirectory
             self.directory = base.appendingPathComponent("EnergyTraces", isDirectory: true)

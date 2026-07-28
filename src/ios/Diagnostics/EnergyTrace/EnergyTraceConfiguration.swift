@@ -41,7 +41,12 @@ struct EnergyTraceConfiguration: Sendable, Equatable {
 
 enum EnergyTraceState {
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var _enabled = false
+    // Research build: tracing is ON by default — every agent task auto-opens
+    // a task-scoped run and writes one JSONL trace to Documents/EnergyTraces/
+    // (visible in the Files app), pruned oldest-first by the retention caps.
+    // Idle cost is nil: the sampler only runs while a task is active.
+    // Flip with `minis-debug rpc debug.energyTrace.disable` when unwanted.
+    nonisolated(unsafe) private static var _enabled = true
     nonisolated(unsafe) private static var _configuration = EnergyTraceConfiguration()
 
     /// Cheap gate for every instrumentation call site. When false, no spans,

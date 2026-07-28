@@ -232,14 +232,19 @@ enum DebugRPCEnergy {
         var documentsPath: String? = nil
         if let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
             let exportDir = docs.appendingPathComponent("EnergyTraces", isDirectory: true)
-            do {
-                try fm.createDirectory(at: exportDir, withIntermediateDirectories: true)
-                let dest = exportDir.appendingPathComponent(zipURL.lastPathComponent)
-                try? fm.removeItem(at: dest)
-                try fm.copyItem(at: zipURL, to: dest)
+            let dest = exportDir.appendingPathComponent(zipURL.lastPathComponent)
+            if dest.path == zipURL.path {
+                // Traces already live in Documents/EnergyTraces — nothing to copy.
                 documentsPath = "Documents/EnergyTraces/\(zipURL.lastPathComponent)"
-            } catch {
-                // Non-fatal: the primary copy next to the traces still exists.
+            } else {
+                do {
+                    try fm.createDirectory(at: exportDir, withIntermediateDirectories: true)
+                    try? fm.removeItem(at: dest)
+                    try fm.copyItem(at: zipURL, to: dest)
+                    documentsPath = "Documents/EnergyTraces/\(zipURL.lastPathComponent)"
+                } catch {
+                    // Non-fatal: the primary copy next to the traces still exists.
+                }
             }
         }
         var result: [String: Any] = ["ok": true, "zip": zipURL.lastPathComponent, "bytes": size]
@@ -269,7 +274,7 @@ enum DebugRPCEnergy {
 
     private static func traceDirectory() -> URL? {
         EnergyTraceStore.shared.listTraceFiles().first?.url.deletingLastPathComponent()
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
                 .first?.appendingPathComponent("EnergyTraces", isDirectory: true)
     }
 
