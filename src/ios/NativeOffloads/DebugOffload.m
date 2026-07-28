@@ -243,8 +243,27 @@ static int cmd_discover(int argc, char **argv, int stdout_fd, int stderr_fd, BOO
 /// Lets research workflows reach methods without a dedicated subcommand
 /// (e.g. debug.energyTrace.start) straight from the in-app terminal.
 static int cmd_rpc(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL compact, BOOL quiet) {
-    NSArray<NSString *> *pos = noff_positional_args(argc, argv);
-    NSString *method = pos.count >= 2 ? pos[1] : nil;
+    // Collect non-flag tokens ourselves and drop the tool/subcommand tokens by
+    // NAME rather than by index — noff_positional_args' subcommand-skipping
+    // depends on how the kernel passes argv[0], which bit us here.
+    NSMutableArray<NSString *> *pos = [NSMutableArray array];
+    for (int i = 0; i < argc; i++) {
+        NSString *arg = [NSString stringWithUTF8String:argv[i]];
+        if ([arg hasPrefix:@"-"]) {
+            if ([arg hasPrefix:@"--"] && i + 1 < argc && argv[i + 1][0] != '-') {
+                i++; // skip the option's value
+            }
+            continue;
+        }
+        [pos addObject:arg];
+    }
+    while (pos.count > 0 &&
+           ([pos[0] isEqualToString:@"rpc"] ||
+            [pos[0] isEqualToString:@"minis-debug"] ||
+            [pos[0] hasSuffix:@"/minis-debug"])) {
+        [pos removeObjectAtIndex:0];
+    }
+    NSString *method = pos.count >= 1 ? pos[0] : nil;
     if (!method) {
         NSDictionary *err = noff_json_error(TOOL_NAME, @"rpc", NOFF_ERR_INVALID_ARGS,
                                              @"rpc requires a method name. Usage: minis-debug rpc <method> ['{\"param\":1}']");
@@ -252,9 +271,9 @@ static int cmd_rpc(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL com
         return NOFF_EXIT_INVALID_ARGS;
     }
     NSDictionary *params = @{};
-    if (pos.count >= 3) {
+    if (pos.count >= 2) {
         NSError *jsonErr = nil;
-        id parsed = [NSJSONSerialization JSONObjectWithData:[pos[2] dataUsingEncoding:NSUTF8StringEncoding]
+        id parsed = [NSJSONSerialization JSONObjectWithData:[pos[1] dataUsingEncoding:NSUTF8StringEncoding]
                                                     options:0 error:&jsonErr];
         if (![parsed isKindOfClass:[NSDictionary class]]) {
             NSDictionary *err = noff_json_error(TOOL_NAME, @"rpc", NOFF_ERR_INVALID_ARGS,
