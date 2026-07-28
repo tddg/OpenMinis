@@ -1681,7 +1681,21 @@ extension AIChatViewModel {
             return nil
         }
         logger.info("[Persist] built raw.sid=\(raw.sessionId.prefix(8)) raw.id=\(raw.id.prefix(8)) role=\(raw.role.rawValue)")
+        // Energy research trace: meaningful persistence only (full message
+        // append incl. media), not every small write.
+        var energyToken: EnergySpanToken?
+        if let ctx = EnergyTraceRuntime.shared.taskContext(sessionId: self.sessionId) {
+            energyToken = await EnergyTrace.shared.beginSpan(
+                runID: ctx.runID, parent: ctx.parent, name: .statePersist,
+                metadata: [
+                    "operation": .string("append_message"),
+                    "part_count": .int(Int64(msg.parts.count)),
+                ])
+        }
         await ChatStore.shared.appendMessage(raw)
+        if let energyToken {
+            await EnergyTrace.shared.endSpan(energyToken, outcome: .success)
+        }
         // Post-write DB sanity check: query count + max(sort_order) for this session
         let stats = await ChatStore.shared.sessionWriteStats(sessionId: raw.sessionId)
         logger.info("[Persist] post-write sid=\(raw.sessionId.prefix(8)) dbCount=\(stats.count) dbMaxSortOrder=\(stats.maxSortOrder)")

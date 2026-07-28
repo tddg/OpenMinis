@@ -28,7 +28,14 @@ final class EnergyTraceRuntime {
         let autoStartedRun: Bool
     }
 
+    private struct ModelPhase {
+        var request: EnergySpanToken
+        var ttft: EnergySpanToken?
+        var stream: EnergySpanToken?
+    }
+
     private var sessionTasks: [String: SessionTask] = [:]
+    private var modelPhases: [String: ModelPhase] = [:]
     private var samplerTask: Task<Void, Never>?
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var batteryMonitoringWasEnabled: Bool?
@@ -91,6 +98,11 @@ final class EnergyTraceRuntime {
 
         enqueue { [weak self] in
             guard let self, let st = self.sessionTasks.removeValue(forKey: sid) else { return }
+            // A model iteration that threw leaves its phase spans open; close
+            // them before the parent task so the trace nests cleanly.
+            await self.closeModelPhase(sessionId: sid,
+                                       outcome: cancelled ? .cancelled : .failure("agent_task_ended"),
+                                       metadata: [:])
             let outcome: EnergySpanOutcome
             if cancelled {
                 outcome = .cancelled
@@ -116,6 +128,78 @@ final class EnergyTraceRuntime {
         let sid = sessionId ?? "no-session"
         guard let st = sessionTasks[sid] else { return nil }
         return (st.runID, st.token)
+    }
+
+    // MARK: Model request phases (called from runAgentLoop / processStreamEvents)
+    //
+    // One model_request span per agent-loop iteration (covering the request
+    // plus any in-iteration auto-retries), with model_time_to_first_token and
+    // model_stream child spans split at the first streamed content event.
+
+    func modelRequestBegan(sessionId: String?, provider: String,
+                           modelId: String, requestIndex: Int) {
+        guard EnergyTraceState.isEnabled else { return }
+        let sid = sessionId ?? "no-session"
+        enqueue { [weak self] in
+            guard let self, let st = self.sessionTasks[sid] else { return }
+            // A dangling phase from a thrown iteration: close it first.
+            await self.closeModelPhase(sessionId: sid,
+                                       outcome: .failure("superseded"),
+                                       metadata: [:])
+            let request = await EnergyTrace.shared.beginSpan(
+                runID: st.runID, parent: st.token, name: .modelRequest,
+                metadata: [
+                    "provider": .string(provider),
+                    "model": .string(modelId),
+                    "request_index": .int(Int64(requestIndex)),
+                ])
+            let ttft = await EnergyTrace.shared.beginSpan(
+                runID: st.runID, parent: request, name: .modelTTFT)
+            self.modelPhases[sid] = ModelPhase(request: request, ttft: ttft)
+        }
+    }
+
+    /// First streamed content event: ends the TTFT span, starts model_stream.
+    /// Safe to call on every content-block start — only the first has effect.
+    func modelFirstToken(sessionId: String?) {
+        guard EnergyTraceState.isEnabled else { return }
+        let sid = sessionId ?? "no-session"
+        enqueue { [weak self] in
+            guard let self, var phase = self.modelPhases[sid],
+                  let ttft = phase.ttft else { return }
+            await EnergyTrace.shared.endSpan(ttft, outcome: .success)
+            phase.ttft = nil
+            phase.stream = await EnergyTrace.shared.beginSpan(
+                runID: phase.request.runID, parent: phase.request, name: .modelStream)
+            self.modelPhases[sid] = phase
+        }
+    }
+
+    func modelRequestEnded(sessionId: String?, success: Bool,
+                           metadata: [String: EnergyValue]) {
+        guard EnergyTraceState.isEnabled else { return }
+        let sid = sessionId ?? "no-session"
+        enqueue { [weak self] in
+            await self?.closeModelPhase(
+                sessionId: sid,
+                outcome: success ? .success : .failure("model_request_error"),
+                metadata: metadata)
+        }
+    }
+
+    /// Must run inside the serial chain (or from an op already on it).
+    private func closeModelPhase(sessionId sid: String,
+                                 outcome: EnergySpanOutcome,
+                                 metadata: [String: EnergyValue]) async {
+        guard let phase = modelPhases.removeValue(forKey: sid) else { return }
+        if let ttft = phase.ttft {
+            // No content ever arrived; the TTFT span shares the request outcome.
+            await EnergyTrace.shared.endSpan(ttft, outcome: outcome)
+        }
+        if let stream = phase.stream {
+            await EnergyTrace.shared.endSpan(stream, outcome: outcome)
+        }
+        await EnergyTrace.shared.endSpan(phase.request, outcome: outcome, metadata: metadata)
     }
 
     // MARK: Explicit (researcher-driven) runs — used by debug controls

@@ -213,6 +213,30 @@ extension AIChatViewModel {
             return "{}"
         }()
 
+        // Energy research trace: span for tools that have no deeper canonical
+        // span. shell_execute and browser_use are deliberately excluded — they
+        // are measured at runRaw / BrowserTabPool.execute, and a second span
+        // here would double-count them.
+        var energyToolToken: EnergySpanToken?
+        if let ctx = EnergyTraceRuntime.shared.taskContext(sessionId: sessionId),
+           tu.name != "shell_execute", tu.name != "browser_use" {
+            let spanName: EnergySpanName
+            switch tu.name {
+            case "file_read", "read_image": spanName = .fileRead
+            case "file_write", "file_edit": spanName = .fileWrite
+            case "memory_write", "memory_get": spanName = .statePersist
+            default: spanName = .toolDispatch
+            }
+            energyToolToken = await EnergyTrace.shared.beginSpan(
+                runID: ctx.runID, parent: ctx.parent, name: spanName,
+                metadata: [
+                    "tool_name": .string(tu.name),
+                    "tool_family": .string("files"),
+                    "execution_surface": .string("swift_native"),
+                    "input_bytes": .int(Int64(argsJson.utf8.count)),
+                ])
+        }
+
         do {
         switch tu.name {
         case "shell_execute":
@@ -646,6 +670,15 @@ extension AIChatViewModel {
             ctLogger.error("Tool execution threw non-cancellation error: \(error)")
             toolOutput = "Error: \(error.localizedDescription)"
             toolSuccess = false
+        }
+
+        if let energyToolToken {
+            let outcome: EnergySpanOutcome = cancelledHere ? .cancelled
+                : EnergySpanOutcome(success: toolSuccess,
+                                    errorClass: toolSuccess ? nil : "tool_error")
+            await EnergyTrace.shared.endSpan(
+                energyToolToken, outcome: outcome,
+                metadata: ["output_bytes": .int(Int64(toolOutput.utf8.count))])
         }
 
         // Tail cancel-detection: if Task got cancelled mid-execution.

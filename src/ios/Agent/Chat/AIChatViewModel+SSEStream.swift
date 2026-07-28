@@ -290,6 +290,13 @@ extension AIChatViewModel {
             case .contentBlockStart(let start):
                 // Model started producing output — clear the "thinking" indicator
                 await MainActor.run {
+                    // Energy research trace: first content event marks time-to-
+                    // first-token (providers emit contentBlockStart lazily on
+                    // the first real output). Idempotent per model_request;
+                    // cheap boolean check when tracing is disabled.
+                    if EnergyTraceState.isEnabled {
+                        EnergyTraceRuntime.shared.modelFirstToken(sessionId: sessionId)
+                    }
                     guard msgIdx < messages.count else { return }
                     if messages[msgIdx].isAwaitingModelResponse {
                         messages[msgIdx].isAwaitingModelResponse = false

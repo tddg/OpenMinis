@@ -4623,6 +4623,15 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             AgentRequestTrace.shared.step("streamAgentMessage.call", detail: "maxTokens=\(provider.defaultMaxTokens)")
             #endif
             let iterationStreamStart = Date()
+            // Energy research trace: one model_request span per loop iteration
+            // (covers the request plus in-iteration retries); TTFT/stream
+            // child spans are split when the first content event arrives in
+            // processStreamEvents. No-op when tracing is disabled.
+            EnergyTraceRuntime.shared.modelRequestBegan(
+                sessionId: sessionId,
+                provider: provider.name,
+                modelId: provider.model.id,
+                requestIndex: turnCount)
             let prevEntryId = activeEntryId
             fallbackReasons.removeAll()
             // Phase B: route through effectiveAgentHistory() so compact summary is
@@ -4937,6 +4946,23 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
             // Track session-level token stats
             let iterationStreamDuration = streamEnd.timeIntervalSince(iterationStreamStart)
             let iterUsage = streamResult.turnUsage
+            // Energy research trace: close this iteration's model_request span
+            // with provider-reported usage (never estimated — fields are absent
+            // when the provider returned none).
+            if EnergyTraceState.isEnabled {
+                var energyMeta: [String: EnergyValue] = [
+                    "stream_duration_ms": .double(iterationStreamDuration * 1000),
+                    "finish_reason": stopReason.map { .string(String(describing: $0)) } ?? .null,
+                ]
+                if iterUsage.inputTokens > 0 { energyMeta["input_tokens"] = .int(Int64(iterUsage.inputTokens)) }
+                if iterUsage.outputTokens > 0 { energyMeta["output_tokens"] = .int(Int64(iterUsage.outputTokens)) }
+                if iterUsage.cacheReadTokens > 0 { energyMeta["cached_input_tokens"] = .int(Int64(iterUsage.cacheReadTokens)) }
+                if iterUsage.cacheCreationTokens > 0 { energyMeta["cache_creation_tokens"] = .int(Int64(iterUsage.cacheCreationTokens)) }
+                if iterUsage.latestContextTokens > 0 { energyMeta["context_tokens"] = .int(Int64(iterUsage.latestContextTokens)) }
+                if streamResult.isStreamInterrupted { energyMeta["stream_interrupted"] = .bool(true) }
+                EnergyTraceRuntime.shared.modelRequestEnded(
+                    sessionId: sessionId, success: true, metadata: energyMeta)
+            }
             sessionInputTokens += iterUsage.inputTokens
             sessionOutputTokens += iterUsage.outputTokens
             sessionCacheReadTokens += iterUsage.cacheReadTokens

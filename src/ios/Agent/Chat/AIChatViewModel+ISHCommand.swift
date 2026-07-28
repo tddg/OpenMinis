@@ -145,6 +145,18 @@ extension AIChatViewModel {
                 "tool_family": .string("shell"),
                 "execution_surface": .string("ish"),
             ]
+            // Native Apple tools ride shell_execute into iSH, where the guest
+            // stub is routed to an ObjC handler (the dispatcher lives in the
+            // iSH kernel fork). Classify those spans here — a stable command
+            // name is not sensitive — so native-offload cost is separable
+            // from real shell work without a second span layer.
+            if let offload = OffloadPermissionManager.extractOffloadCommand(from: command) {
+                let family = offload.hasPrefix("apple-")
+                    ? String(offload.dropFirst("apple-".count)) : offload
+                meta["tool_family"] = .string(family)
+                meta["execution_surface"] = .string("swift_native")
+                meta["offload_command"] = .string(offload)
+            }
             if EnergyTraceState.configuration.storeCommandPreview {
                 meta["command_preview"] = .string(String(command.prefix(120)))
             }
