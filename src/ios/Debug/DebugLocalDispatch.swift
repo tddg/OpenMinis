@@ -16,7 +16,12 @@ import Foundation
 /// is shared across invocations (same lifetime as the app).
 ///
 /// Release builds compile this file out via `#if DEBUG`.
-@objc public final class DebugLocalDispatch: NSObject {
+// Explicit ObjC name: bare `@objc` keeps the module-qualified runtime name
+// ("Minis.DebugLocalDispatch"), which makes DebugOffload.m's
+// NSClassFromString(@"DebugLocalDispatch") return nil and every RPC-backed
+// minis-debug subcommand fail with -32001.
+@objc(DebugLocalDispatch)
+public final class DebugLocalDispatch: NSObject {
 
     @objc(sharedInstance)
     public static let shared = DebugLocalDispatch()
