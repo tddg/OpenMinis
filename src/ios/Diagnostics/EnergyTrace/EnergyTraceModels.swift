@@ -287,7 +287,9 @@ enum EnergyClock {
         clock_gettime_nsec_np(CLOCK_MONOTONIC)
     }
 
-    private static let iso8601: ISO8601DateFormatter = {
+    // ISO8601DateFormatter is documented thread-safe; the unsafe opt-out is
+    // for the Swift 6 language mode used by the test target.
+    nonisolated(unsafe) private static let iso8601: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f

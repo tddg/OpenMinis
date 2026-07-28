@@ -1101,6 +1101,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				ThinkingLevelTests.swift,
+				ToolPreflightTests.swift,
 			);
 			target = BB1000070F700000000000AA /* MinisTests */;
 		};
