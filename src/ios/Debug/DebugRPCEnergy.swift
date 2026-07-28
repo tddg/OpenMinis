@@ -225,7 +225,26 @@ enum DebugRPCEnergy {
             }
         }
         let size = (try? zipURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        return ["ok": true, "zip": zipURL.lastPathComponent, "bytes": size]
+
+        // Also copy into Documents/EnergyTraces/ so the export is reachable
+        // from the Files app / Finder device browsing (UIFileSharingEnabled)
+        // without downloading the whole app container.
+        var documentsPath: String? = nil
+        if let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let exportDir = docs.appendingPathComponent("EnergyTraces", isDirectory: true)
+            do {
+                try fm.createDirectory(at: exportDir, withIntermediateDirectories: true)
+                let dest = exportDir.appendingPathComponent(zipURL.lastPathComponent)
+                try? fm.removeItem(at: dest)
+                try fm.copyItem(at: zipURL, to: dest)
+                documentsPath = "Documents/EnergyTraces/\(zipURL.lastPathComponent)"
+            } catch {
+                // Non-fatal: the primary copy next to the traces still exists.
+            }
+        }
+        var result: [String: Any] = ["ok": true, "zip": zipURL.lastPathComponent, "bytes": size]
+        if let documentsPath { result["documents_path"] = documentsPath }
+        return result
     }
 
     /// `debug.energyTrace.delete {}` — delete all trace files and exports.
