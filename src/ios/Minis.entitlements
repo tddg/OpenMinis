@@ -16,7 +16,7 @@
 	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.openminis.app</string>
+		<string>group.edu.vt.yuec.minis</string>
 	</array>
 </dict>
 </plist>
