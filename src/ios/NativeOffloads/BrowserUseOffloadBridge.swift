@@ -164,6 +164,25 @@ import Foundation
                 let encoded = Self.encode(result, withBase64: withBase64, sid: sid)
                 let totalMs = Int((CFAbsoluteTimeGetCurrent() - bridgeStart) * 1000)
                 logger.info("[BridgeTiming] completion elapsed=\(totalMs)ms action=\(input.action.rawValue) success=\(result.success)")
+                // Energy research trace: bridge overhead (parse + pool resolve
+                // + encode/persist around the pool's canonical browser_action
+                // span) as a point event — deliberately NOT a second span, so
+                // bridge-routed actions are never double-counted.
+                if let ctx = EnergyTraceRuntime.shared.taskContext(sessionId: sid) {
+                    let poolMs = poolDoneMs - poolResolvedMs
+                    let meta: [String: EnergyValue] = [
+                        "action": .string(input.action.rawValue),
+                        "total_ms": .int(Int64(totalMs)),
+                        "pool_execute_ms": .int(Int64(poolMs)),
+                        "bridge_overhead_ms": .int(Int64(max(0, totalMs - poolMs))),
+                        "with_base64": .bool(withBase64),
+                    ]
+                    Task {
+                        await EnergyTrace.shared.event(runID: ctx.runID, span: ctx.parent,
+                                                       name: "browser_bridge_overhead",
+                                                       metadata: meta)
+                    }
+                }
                 completion(encoded)
             } catch {
                 let totalMs = Int((CFAbsoluteTimeGetCurrent() - bridgeStart) * 1000)

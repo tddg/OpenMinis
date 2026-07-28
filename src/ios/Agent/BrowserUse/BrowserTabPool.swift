@@ -691,6 +691,29 @@ final class BrowserTabPool: ObservableObject {
             url: input.url,
             tabId: input.tabId
         )
+        // Energy research trace: THE canonical browser_action span. Both the
+        // agent tool path (singleTab=false) and the shell/native CLI bridge
+        // (singleTab=true) land here, so instrumenting only this wrapper
+        // guarantees an action is never counted twice; the bridge records its
+        // own overhead as a point event, not a second span. Hosts only — full
+        // URLs never enter the trace.
+        var energyToken: EnergySpanToken?
+        if let ctx = EnergyTraceRuntime.shared.taskContext(sessionId: sessionId) {
+            var meta: [String: EnergyValue] = [
+                "action": .string(input.action.rawValue),
+                "tool_family": .string("browser"),
+                "execution_surface": .string(singleTab ? "ish_bridge" : "swift_native"),
+                "live_tabs": .int(Int64(tabs.count)),
+                "started_in_background": .bool(UIApplication.shared.applicationState == .background),
+            ]
+            if let tabId = input.tabId { meta["tab_id"] = .int(Int64(tabId)) }
+            if let url = input.url, let host = URL(string: url)?.host {
+                meta["domain"] = .string(host)
+            }
+            energyToken = await EnergyTrace.shared.beginSpan(
+                runID: ctx.runID, parent: ctx.parent,
+                name: .browserAction, metadata: meta)
+        }
         do {
             let result = try await executeInner(action: input, singleTab: singleTab)
             BrowserResourceMonitor.shared.actionDidFinish(
@@ -701,6 +724,27 @@ final class BrowserTabPool: ObservableObject {
                 // from an ordinary page error.
                 error: result.success ? nil : result.text
             )
+            if let energyToken {
+                var meta: [String: EnergyValue] = [
+                    "live_tabs": .int(Int64(tabs.count)),
+                    "text_bytes": .int(Int64(result.text.utf8.count)),
+                ]
+                if let b64 = result.base64Image {
+                    meta["screenshot_bytes"] = .int(Int64(b64.utf8.count * 3 / 4))
+                } else if let path = result.imageFilePath,
+                          let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? Int {
+                    meta["screenshot_bytes"] = .int(Int64(size))
+                }
+                if let data = result.fetchedFileData {
+                    meta["downloaded_bytes"] = .int(Int64(data.count))
+                }
+                if let tabId = result.tabId { meta["tab_id"] = .int(Int64(tabId)) }
+                await EnergyTrace.shared.endSpan(
+                    energyToken,
+                    outcome: EnergySpanOutcome(success: result.success,
+                                               errorClass: result.success ? nil : "browser_action_failed"),
+                    metadata: meta)
+            }
             return result
         } catch {
             BrowserResourceMonitor.shared.actionDidFinish(
@@ -708,6 +752,12 @@ final class BrowserTabPool: ObservableObject {
                 success: false,
                 error: "throw: \(error.localizedDescription)"
             )
+            if let energyToken {
+                let outcome: EnergySpanOutcome = (error is CancellationError)
+                    ? .cancelled
+                    : .failure(String(describing: type(of: error)))
+                await EnergyTrace.shared.endSpan(energyToken, outcome: outcome)
+            }
             throw error
         }
     }

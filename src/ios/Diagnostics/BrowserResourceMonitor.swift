@@ -423,6 +423,21 @@ final class BrowserResourceMonitor {
             + "killed by the system (OOM/jetsam). Any in-flight action on this tab will not "
             + "return. \(snap.logLine)"
         )
+        // Energy research trace: WebContent kills matter for energy analysis
+        // (they force reloads and retries). Host only, no full URL.
+        if EnergyTraceState.isEnabled {
+            var meta: [String: EnergyValue] = [
+                "inflight_browser_actions": .int(Int64(inflight.count)),
+            ]
+            if let tabId { meta["tab_id"] = .int(Int64(tabId)) }
+            if let url, let host = URL(string: url)?.host { meta["domain"] = .string(host) }
+            Task {
+                guard let runID = await EnergyTrace.shared.activeRunID else { return }
+                await EnergyTrace.shared.event(runID: runID,
+                                               name: "web_content_terminated",
+                                               metadata: meta)
+            }
+        }
     }
 
     // MARK: - Mach sampling
