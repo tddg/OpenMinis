@@ -313,6 +313,27 @@ final class DebugJSONRPC: @unchecked Sendable {
             return DebugRPCPerfTrace.status()
         case "debug.perfTrace.flush":
             return DebugRPCPerfTrace.flush()
+        // MARK: EnergyTrace
+        case "debug.energyTrace.status":
+            return await DebugRPCEnergy.status()
+        case "debug.energyTrace.enable":
+            return await DebugRPCEnergy.setEnabled(true)
+        case "debug.energyTrace.disable":
+            return await DebugRPCEnergy.setEnabled(false)
+        case "debug.energyTrace.start":
+            return await DebugRPCEnergy.start(params: params)
+        case "debug.energyTrace.stop":
+            return await DebugRPCEnergy.stop(params: params)
+        case "debug.energyTrace.setSamplingInterval":
+            return DebugRPCEnergy.setSamplingInterval(params: params)
+        case "debug.energyTrace.list":
+            return DebugRPCEnergy.list()
+        case "debug.energyTrace.read":
+            return try DebugRPCEnergy.read(params: params)
+        case "debug.energyTrace.export":
+            return try await DebugRPCEnergy.export(params: params)
+        case "debug.energyTrace.delete":
+            return await DebugRPCEnergy.delete()
         // MARK: Provider methods
         case "provider.types":
             return await MainActor.run { DebugRPCProvider.types() }

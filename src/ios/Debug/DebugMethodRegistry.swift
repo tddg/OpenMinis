@@ -587,6 +587,96 @@ enum DebugMethodRegistry {
             example: [:]
         ),
 
+        // MARK: EnergyTrace
+        MethodSpec(
+            name: "debug.energyTrace.status",
+            description: "Report energy-trace state: enabled flag, active run, current trace file, sampling interval, and stored trace totals.",
+            params: [],
+            returns: "{enabled, active_run_id, current_file, sampling_interval_s, store_command_preview, trace_file_count, trace_total_bytes}",
+            example: [:]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.start",
+            description: "Enable energy tracing and open a researcher-labeled run (one JSONL trace file). Spans from the agent task driven next (model/shell/browser/native/persistence) attach to this run, with resource samples every sampling interval. Use before submitting the controlled task; align with a simultaneous Instruments Power Profiler recording via the com.openminis.app.energytrace signposts.",
+            params: [
+                ParamSpec(name: "task_class", type: "string", required: false, default: "unknown", description: "Workload class: native | shell | browser | vision | mixed | remote | unknown."),
+                ParamSpec(name: "label", type: "string", required: false, default: nil, description: "Free-form experiment label, e.g. browser_research_01."),
+                ParamSpec(name: "variant", type: "string", required: false, default: nil, description: "Implementation variant under test, e.g. baseline | batched | native_macro."),
+                ParamSpec(name: "sampling_interval_s", type: "number", required: false, default: 2, description: "Resource sample cadence in seconds; clamped to 1, 2, 5, or 10."),
+                ParamSpec(name: "store_command_preview", type: "boolean", required: false, default: false, description: "Researcher-only: include a 120-char redacted command preview alongside the hash in shell spans."),
+            ],
+            returns: "{ok, run_id, file, sampling_interval_s}",
+            example: ["task_class": "browser", "label": "browser_research_01", "variant": "baseline"]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.stop",
+            description: "Close the active energy-trace run and (unless keep_enabled) disable tracing. Flushes and closes the JSONL file.",
+            params: [
+                ParamSpec(name: "success", type: "boolean", required: false, default: true, description: "Whether the controlled task completed successfully."),
+                ParamSpec(name: "completion_reason", type: "string", required: false, default: "task_finished", description: "Free-form completion reason recorded on run_end."),
+                ParamSpec(name: "keep_enabled", type: "boolean", required: false, default: false, description: "Leave tracing enabled after the run (subsequent agent tasks auto-open task-scoped runs)."),
+            ],
+            returns: "{ok, enabled}",
+            example: ["success": true, "completion_reason": "task_finished"]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.enable",
+            description: "Enable energy tracing WITHOUT opening a run: each agent task then auto-opens a task-scoped run (task_class=unknown). For labeled experiments prefer debug.energyTrace.start.",
+            params: [],
+            returns: "{ok, enabled}",
+            example: [:]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.disable",
+            description: "Disable energy tracing, closing any active run first.",
+            params: [],
+            returns: "{ok, enabled}",
+            example: [:]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.setSamplingInterval",
+            description: "Set the resource-sample cadence for energy-trace runs.",
+            params: [
+                ParamSpec(name: "seconds", type: "number", required: true, default: 2, description: "Allowed values: 1, 2, 5, 10 (nearest is used)."),
+            ],
+            returns: "{ok, sampling_interval_s}",
+            example: ["seconds": 2]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.list",
+            description: "List stored energy trace files (name, bytes, modified).",
+            params: [],
+            returns: "{files: [{name, bytes, modified}], total_bytes}",
+            example: [:]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.read",
+            description: "Read a stored trace (.jsonl) or export (.zip) in base64 chunks over the debug channel.",
+            params: [
+                ParamSpec(name: "file", type: "string", required: true, default: nil, description: "Bare filename from debug.energyTrace.list or .export (no paths)."),
+                ParamSpec(name: "offset", type: "number", required: false, default: 0, description: "Byte offset to start reading from."),
+                ParamSpec(name: "length", type: "number", required: false, default: 1_048_576, description: "Max bytes to return (cap 4 MiB)."),
+            ],
+            returns: "{file, offset, length, total_bytes, eof, base64}",
+            example: ["file": "energy-trace-20260728-153000-ab12cd34.jsonl"]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.export",
+            description: "Build a shareable ZIP (manifest.json + trace.jsonl + README.txt) for a trace file (default: most recent). Pull it with debug.energyTrace.read. Never uploaded automatically.",
+            params: [
+                ParamSpec(name: "file", type: "string", required: false, default: nil, description: "Trace filename to export; omitted = most recent."),
+            ],
+            returns: "{ok, zip, bytes}",
+            example: [:]
+        ),
+        MethodSpec(
+            name: "debug.energyTrace.delete",
+            description: "Delete ALL stored energy traces and export ZIPs (closing any active run).",
+            params: [],
+            returns: "{ok}",
+            example: [:]
+        ),
+
         // MARK: Provider methods
         MethodSpec(
             name: "provider.types",
