@@ -578,6 +578,15 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 // watchdog lands inside _fillLayoutHole, SwiftUI Layout, or
                 // elsewhere — and correlate with the content being rendered.
                 StreamingHangLogger.shared.acquire(reason: "isProcessing=true session=\(sessionId ?? "nil")")
+                // Energy research trace: this transition brackets every agent
+                // loop entry point (send/retry/resume/rerun/queued drain), so
+                // it is the single agent_task span boundary. No-op when
+                // tracing is disabled.
+                EnergyTraceRuntime.shared.agentTaskStarted(
+                    sessionId: sessionId,
+                    trigger: "agent_loop",
+                    modelId: selectedModel.id,
+                    provider: selectedModel.provider)
             } else if !isProcessing && oldValue {
                 // [T-ios-defer-icloud-sync-after-stop] Agent loop finished. Do
                 // NOT flush the deferred iCloud push or replay a pull reload now
@@ -587,6 +596,12 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
                 // runs on release (60s timer / leave session / background).
                 beginPostStopSyncHold()
                 StreamingHangLogger.shared.release(reason: "isProcessing=false session=\(sessionId ?? "nil")")
+                // Energy research trace: close the agent_task span at true
+                // idle. No-op when tracing is disabled.
+                EnergyTraceRuntime.shared.agentTaskEnded(
+                    sessionId: sessionId,
+                    cancelled: userDidCancel,
+                    failed: messages.last?.error != nil || errorMessage != nil)
                 // [T-ios-ui-frozen-on-tool-while-loop-runs] Force one snapshot
                 // re-apply from the CURRENT in-memory messages at loop end.
                 //

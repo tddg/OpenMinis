@@ -12,6 +12,34 @@ final class NetworkMonitor {
     private var lastInterfaceTypes: Set<NWInterface.InterfaceType> = []
     private var isStarted = false
 
+    // Coarse network class for diagnostics (energy trace run metadata).
+    // "unknown" until start() has run.
+    private static let typeLock = NSLock()
+    nonisolated(unsafe) private static var _currentTypeName = "unknown"
+
+    static var currentNetworkTypeName: String {
+        typeLock.lock(); defer { typeLock.unlock() }
+        return _currentTypeName
+    }
+
+    private static func recordNetworkType(_ path: NWPath) {
+        let name: String
+        if path.status != .satisfied {
+            name = "offline"
+        } else if path.usesInterfaceType(.wifi) {
+            name = "wifi"
+        } else if path.usesInterfaceType(.cellular) {
+            name = "cellular"
+        } else if path.usesInterfaceType(.wiredEthernet) {
+            name = "wired"
+        } else {
+            name = "other"
+        }
+        typeLock.lock()
+        _currentTypeName = name
+        typeLock.unlock()
+    }
+
     private init() {}
 
     func start() {
@@ -24,6 +52,7 @@ final class NetworkMonitor {
         // delayed by several hundred milliseconds).
         let initialPath = monitor.currentPath
         lastInterfaceTypes = activeInterfaceTypes(initialPath)
+        Self.recordNetworkType(initialPath)
         logger.info("[Network] Monitor started — writing initial DNS config")
         NSLog("NetworkMonitor: about to refreshDns + dump proxy")
         ISHKernel.shared.refreshDns()
@@ -43,6 +72,7 @@ final class NetworkMonitor {
     }
 
     private func handlePathUpdate(_ path: NWPath) {
+        Self.recordNetworkType(path)
         let currentTypes = activeInterfaceTypes(path)
         let satisfied = path.status == .satisfied
 

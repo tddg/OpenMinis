@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E5ET00005 /* EnergyTraceRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5ET00015 /* EnergyTraceRuntime.swift */; };
+		E5ET00006 /* EnergyResourceSampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5ET00016 /* EnergyResourceSampler.swift */; };
 		E5ET00001 /* EnergyTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5ET00011 /* EnergyTrace.swift */; };
 		E5ET00021 /* EnergyTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5ET00011 /* EnergyTrace.swift */; };
 		E5ET00002 /* EnergyTraceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5ET00012 /* EnergyTraceModels.swift */; };
@@ -550,6 +552,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E5ET00015 /* EnergyTraceRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyTraceRuntime.swift; sourceTree = "<group>"; };
+		E5ET00016 /* EnergyResourceSampler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyResourceSampler.swift; sourceTree = "<group>"; };
 		E5ET00011 /* EnergyTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyTrace.swift; sourceTree = "<group>"; };
 		E5ET00012 /* EnergyTraceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyTraceModels.swift; sourceTree = "<group>"; };
 		E5ET00013 /* EnergyTraceConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyTraceConfiguration.swift; sourceTree = "<group>"; };
@@ -2134,6 +2138,8 @@
 		E5ET00100 /* EnergyTrace */ = {
 			isa = PBXGroup;
 			children = (
+				E5ET00015 /* EnergyTraceRuntime.swift */,
+				E5ET00016 /* EnergyResourceSampler.swift */,
 				E5ET00011 /* EnergyTrace.swift */,
 				E5ET00012 /* EnergyTraceModels.swift */,
 				E5ET00013 /* EnergyTraceConfiguration.swift */,
@@ -2483,6 +2489,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E5ET00005 /* EnergyTraceRuntime.swift in Sources */,
+				E5ET00006 /* EnergyResourceSampler.swift in Sources */,
 				E5ET00001 /* EnergyTrace.swift in Sources */,
 				E5ET00002 /* EnergyTraceModels.swift in Sources */,
 				E5ET00003 /* EnergyTraceConfiguration.swift in Sources */,
