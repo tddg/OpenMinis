@@ -38,6 +38,8 @@ static NSString *const HELP_TEXT =
      "\n"
      "COMMANDS:\n"
      "  discover                              List every JSON-RPC method (rpc.discover)\n"
+     "  rpc <method> [json-params]            Call any JSON-RPC method directly, e.g.\n"
+     "                                        rpc debug.energyTrace.status\n"
      "  viewTree [--maxDepth N]               Dump the live view hierarchy\n"
      "  search <keyword> [--scope all|text|type]\n"
      "                                        Search views by text or class\n"
@@ -235,6 +237,35 @@ static int emit_rpc(int stdout_fd, int stderr_fd, NSString *action,
 
 static int cmd_discover(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL compact, BOOL quiet) {
     return emit_rpc(stdout_fd, stderr_fd, @"discover", @"rpc.discover", @{}, compact, quiet);
+}
+
+/// Generic passthrough: `minis-debug rpc <method> [json-params]`.
+/// Lets research workflows reach methods without a dedicated subcommand
+/// (e.g. debug.energyTrace.start) straight from the in-app terminal.
+static int cmd_rpc(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL compact, BOOL quiet) {
+    NSArray<NSString *> *pos = noff_positional_args(argc, argv);
+    NSString *method = pos.count >= 2 ? pos[1] : nil;
+    if (!method) {
+        NSDictionary *err = noff_json_error(TOOL_NAME, @"rpc", NOFF_ERR_INVALID_ARGS,
+                                             @"rpc requires a method name. Usage: minis-debug rpc <method> ['{\"param\":1}']");
+        noff_emit_json(stdout_fd, err, compact, quiet);
+        return NOFF_EXIT_INVALID_ARGS;
+    }
+    NSDictionary *params = @{};
+    if (pos.count >= 3) {
+        NSError *jsonErr = nil;
+        id parsed = [NSJSONSerialization JSONObjectWithData:[pos[2] dataUsingEncoding:NSUTF8StringEncoding]
+                                                    options:0 error:&jsonErr];
+        if (![parsed isKindOfClass:[NSDictionary class]]) {
+            NSDictionary *err = noff_json_error(TOOL_NAME, @"rpc", NOFF_ERR_INVALID_ARGS,
+                                                 [NSString stringWithFormat:@"params must be a JSON object: %@",
+                                                  jsonErr.localizedDescription ?: @"not an object"]);
+            noff_emit_json(stdout_fd, err, compact, quiet);
+            return NOFF_EXIT_INVALID_ARGS;
+        }
+        params = parsed;
+    }
+    return emit_rpc(stdout_fd, stderr_fd, @"rpc", method, params, compact, quiet);
 }
 
 static int cmd_viewTree(int argc, char **argv, int stdout_fd, int stderr_fd, BOOL compact, BOOL quiet) {
@@ -466,6 +497,7 @@ static int debug_handler(int argc, char **argv,
 
 #if DEBUG
     if ([subcmd isEqualToString:@"discover"])   return cmd_discover(argc, argv, stdout_fd, stderr_fd, compact, quiet);
+    if ([subcmd isEqualToString:@"rpc"])        return cmd_rpc(argc, argv, stdout_fd, stderr_fd, compact, quiet);
     if ([subcmd isEqualToString:@"viewTree"])   return cmd_viewTree(argc, argv, stdout_fd, stderr_fd, compact, quiet);
     if ([subcmd isEqualToString:@"search"])     return cmd_search(argc, argv, stdout_fd, stderr_fd, compact, quiet);
     if ([subcmd isEqualToString:@"inspect"])    return cmd_inspect(argc, argv, stdout_fd, stderr_fd, compact, quiet);
