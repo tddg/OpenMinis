@@ -26,12 +26,14 @@ actor EnergyTrace {
         let token: EnergySpanToken
         let startNs: UInt64
         let signpostState: OSSignpostIntervalState
+        let poiState: OSSignpostIntervalState
     }
 
     private struct RunState {
         let startNs: UInt64
         var openSpans: [UUID: SpanState] = [:]
         let signpostState: OSSignpostIntervalState
+        let poiState: OSSignpostIntervalState
     }
 
     private var runs: [UUID: RunState] = [:]
@@ -69,7 +71,9 @@ actor EnergyTrace {
         let signposter = Self.signposter(for: .agentTask)
         let spid = signposter.makeSignpostID()
         let signpostState = signposter.beginInterval("energy_run", id: spid)
-        runs[runID] = RunState(startNs: startNs, signpostState: signpostState)
+        let poiID = Self.poiSignposter.makeSignpostID()
+        let poiState = Self.poiSignposter.beginInterval("span", id: poiID, "energy_run")
+        runs[runID] = RunState(startNs: startNs, signpostState: signpostState, poiState: poiState)
         activeRunID = runID
 
         var meta = extraMetadata
@@ -115,6 +119,7 @@ actor EnergyTrace {
                                        runID: runID,
                                        metadata: meta))
         Self.signposter(for: .agentTask).endInterval("energy_run", run.signpostState)
+        Self.poiSignposter.endInterval("span", run.poiState)
         store.closeCurrent()
     }
 
@@ -134,9 +139,11 @@ actor EnergyTrace {
                                     active: true)
         let startNs = EnergyClock.monotonicNs()
         let signpostState = Self.beginSignpostInterval(name)
+        let poiState = Self.beginPoiInterval(name)
         runs[runID]?.openSpans[token.spanID] = SpanState(token: token,
                                                         startNs: startNs,
-                                                        signpostState: signpostState)
+                                                        signpostState: signpostState,
+                                                        poiState: poiState)
         store.append(EnergyTraceRecord(recordType: .spanStart,
                                        wallTime: EnergyClock.wallTimeString(),
                                        monotonicNs: startNs,
@@ -178,6 +185,7 @@ actor EnergyTrace {
                                        name: span.token.name.rawValue,
                                        metadata: meta))
         Self.endSignpostInterval(span.token.name, span.signpostState)
+        Self.poiSignposter.endInterval("span", span.poiState)
     }
 
     // MARK: Events
@@ -232,6 +240,20 @@ actor EnergyTrace {
     }
 
     static let signpostSubsystem = "com.openminis.app.energytrace"
+
+    /// Every interval is mirrored to the canonical "PointsOfInterest" category:
+    /// Instruments' Points of Interest instrument records it reliably in every
+    /// template/recording mode, whereas custom categories were observed to be
+    /// dropped by deferred-mode device recordings (xctrace Power Profiler
+    /// pilot, 2026-07-28). The per-category signposters remain the structured
+    /// lanes when they are captured.
+    private static let poiSignposter = OSSignposter(subsystem: signpostSubsystem,
+                                                    category: "PointsOfInterest")
+
+    private static func beginPoiInterval(_ name: EnergySpanName) -> OSSignpostIntervalState {
+        let id = poiSignposter.makeSignpostID()
+        return poiSignposter.beginInterval("span", id: id, "\(name.rawValue, privacy: .public)")
+    }
 
     private static let agentTaskSignposter = OSSignposter(subsystem: signpostSubsystem, category: SignpostCategory.agentTask.rawValue)
     private static let modelSignposter = OSSignposter(subsystem: signpostSubsystem, category: SignpostCategory.model.rawValue)
