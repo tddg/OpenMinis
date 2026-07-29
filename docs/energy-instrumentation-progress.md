@@ -94,11 +94,43 @@ Visualization: https://claude.ai/code/artifact/055ce71a-5fc0-4d29-b1a2-71f0b164e
 - Known gap: battery null in run_start context (enabled just after capture);
   present in every 2 s sample — use samples.
 
-## Next: Power Profiler joint capture (in progress)
-Goal: joules per phase. Record Instruments **Power Profiler + Points of
-Interest** (subsystem `com.openminis.app.energytrace`) while a labeled task
-runs; integrate power over span windows. Notes: phone must be unplugged during
-measurement (charging zeroes system power) → wireless debugging, or accept
-cable for pipeline validation only. CLI route: `xcrun xctrace record
---template ... --device ...`. Not yet done: overhead A/B microbenchmark
-(spec §10), browser-task captures, controlled variant experiments (§13/§14).
+## Power Profiler pilot: DONE (pp_pilot_01, 2026-07-28 22:56)
+
+Pipeline validated end-to-end. Recipe:
+1. Phone unplugged, Wi-Fi tunnel; app foreground; labeled run started on-device.
+2. `xcrun xctrace record --template 'Power Profiler' --instrument 'os_signpost'
+   --device <udid> --attach Minis --time-limit 6m --output run.trace`
+   (`--all-processes` fails: Location Energy Model needs a target).
+3. Export tables: `xcrun xctrace export --input run.trace --xpath
+   '/trace-toc/run[@number="1"]/data/table[@schema="SystemPowerLevel"]'`
+   (also `ProcessSubsystemPowerImpact`, `os-signpost-interval`). XML uses
+   id/ref value interning. SystemPowerLevel is %/hr of battery →
+   iPhone 14 Plus 16.68 Wh ⇒ 1% = 600 J; W = rate × 0.1668.
+4. Pull matching JSONL without user interaction:
+   `xcrun devicectl device copy from --device <coredevice-uuid>
+   --domain-type appDataContainer --domain-identifier edu.vt.yuec.minis
+   --source Documents/EnergyTraces --destination <dir>`.
+5. Align via wall clock (trace start-date in `--toc` vs JSONL wall_time, UTC).
+   Custom-category signposts were DROPPED by the deferred device recording
+   (Apple-subsystem intervals present, ours absent; identical code records
+   fine on macOS) → fixed by mirroring every interval to the
+   PointsOfInterest category (commit 5d64dc3). Analysis script pattern:
+   session scratchpad `power/` dir.
+
+**Pilot numbers** (health task, 68.9 s agent_task, screen on at 100%
+brightness — protocol slip, should be 50%):
+- Baseline (app foreground, idle): 4.70%/hr = **0.78 W**
+- During task: 14.0%/hr = **2.34 W** → **161 J total, 107 J incremental**
+  (0.27% battery per task)
+- Per phase (avg W / incremental J): model stream 49.1 s @ 2.52 W (85 J);
+  TTFT 14.8 s @ 1.82 W (15 J); shell 3.9 s @ 1.88 W (4 J)
+- This pilot was model-dominated (short health query); earlier auto-runs were
+  shell-residency-dominated — both patterns now measurable.
+
+## Not yet done
+- Overhead A/B microbenchmark (spec §10).
+- Controlled variant experiments (§13/§14): repeat runs, fixed brightness
+  (50%!), baseline-subtraction protocol, browser task class, screen-off
+  variants, kill-or-continue evaluation (§17).
+- Battery level null in run_start context (present in samples) — minor fix.
+- ⌘R redeploy needed to get the PoI signpost mirror onto the phone.
